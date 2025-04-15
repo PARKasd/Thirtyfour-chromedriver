@@ -1,0 +1,15 @@
+[package]
+name = "Thirtyfour-chromedriver"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+platform-dirs = "0.3.0"
+reqwest = "0.12.15"
+anyhow = "1.0.97"
+indicatif = "0.17.11"
+zip = "2.1.1"
+zip-extensions = "0.7.0"
+regex = "1.11.1"
+log = "0.4.27"
+tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
