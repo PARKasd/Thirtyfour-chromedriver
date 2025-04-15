@@ -1,7 +1,7 @@
 # 🦀 Rust + Thirtyfour: Auto ChromeDriver Installer
 
 This Rust project automatically downloads the correct version of ChromeDriver based on the version of Chrome installed on your system. It uses the [`thirtyfour`](https://crates.io/crates/thirtyfour) crate for WebDriver automation, and integrates tools to fetch, unzip, and launch the matching driver.
-
+I'm newbie in Rust so code is dirty.
 ## 🚀 Features
 
 - Detect installed Chrome version (cross-platform support)
