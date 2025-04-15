@@ -12,4 +12,5 @@ zip = "2.1.1"
 zip-extensions = "0.7.0"
 regex = "1.11.1"
 log = "0.4.27"
+thirtyfour = "0.35.0"
 tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }

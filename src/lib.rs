@@ -1,1 +1,2 @@
-mod dw_module;
+
+pub mod manager;
