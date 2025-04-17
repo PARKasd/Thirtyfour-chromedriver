@@ -1,13 +1,39 @@
 use std::{fs, process};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use indicatif::{ProgressBar, ProgressStyle};
 use platform_dirs::AppDirs;
+use std::io::Read;
 use regex::Regex;
 use zip_extensions::zip_extract;
 use thirtyfour::{ChromeCapabilities, ChromiumLikeCapabilities};
+
+async fn update_version_file() -> std::io::Result<bool> {
+    let cache_dir = get_cache_dir();
+    fs::create_dir_all(&cache_dir)?;
+
+    let version_path = cache_dir.join("version.txt");
+    let current_version = get_version_info().await;
+
+    if !version_path.exists() {
+        let mut file = File::create(&version_path)?;
+        file.write_all(current_version.as_bytes())?;
+        return Ok(true);
+    }
+
+    
+    let mut existing_version = String::new();
+    File::open(&version_path)?.read_to_string(&mut existing_version)?;
+
+    if existing_version.trim() == current_version {
+        Ok(true)
+    } else {
+        fs::remove_dir_all(&cache_dir)?;
+        Ok(false)
+    }
+}
 
 pub fn get_cache_dir() -> PathBuf {
     let cache_dir = get_cached_dir();
@@ -182,6 +208,7 @@ pub async fn download_chromedriver(client: &reqwest::Client, dw_link: String) ->
 
     Ok(())
 }
+
 pub struct Handler {
     client: reqwest::Client,
 }
@@ -201,8 +228,8 @@ impl Handler {
     }
     fn package_downloaded(&self) -> bool {
         let (chrome_path, driver_path) = get_file_names();
-
-        if Path::new(&driver_path).exists() {
+        let chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(driver_path);
+        if Path::new(&chromedriver_exe).exists() {
             return true;
         }
         false
@@ -225,29 +252,57 @@ impl Handler {
             let dw_links = get_dw_link(get_version_info().await).await;
             download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
         }
-        
+        match update_version_file().await {
+            Ok(result) =>
+                {
+                    println!("Chromedriver Version matches!");
+                },
+            Err(e) =>{
+                println!("Chromedriver Version mismatching. Finding New one!");
+                let dw_links = get_dw_link(get_version_info().await).await;
+                download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+            },
+        }
         let (default_chrome_path, default_driver_path) = get_file_names();
         chrome_exe = default_chrome_path.into();
         chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(chromedriver_exe_name);
-        println!("{}",chromedriver_exe.to_string_lossy());
         
-        capabilities.set_binary(chrome_exe.to_str().unwrap())?;
 
-        let chromedriver_exe = chromedriver_exe.to_str().unwrap();
 
         let mut command = Command::new(chromedriver_exe);
-        let mut command = command
-            .arg(format!("--port={}", port));
-        Ok(command.spawn()?)
+        command
+            .arg(format!("--port={}", port))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+
+
+        let mut child = command.spawn()?;
+
+        let stdout = child.stdout.take().unwrap();
+
+        {
+            let reader = BufReader::new(stdout);
+            for line_result in reader.lines() {
+                let line = line_result?;
+                if line.contains("successfully") {
+                    break;
+                }
+            }
+        }
+
+
+        Ok(child)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
     use std::thread;
     use std::time::Duration;
     use thirtyfour::prelude::*;
-    use crate::manager::Handler;
+    use crate::manager::{dw_name, get_cache_dir, get_file_names, Handler};
 
     #[tokio::test]
     async fn test_launch_chromedriver() -> anyhow::Result<()>{
@@ -259,9 +314,8 @@ mod tests {
         let mut chromedriver = Handler::new()
             .launch_chromedriver(&mut caps, "3000")
             .await?;
-
+        
         println!("Launched Chromedriver");
-
         let driver = WebDriver::new("http://localhost:3000", caps).await?;
         driver.goto("https://www.gimkit.com/join").await?;
 
