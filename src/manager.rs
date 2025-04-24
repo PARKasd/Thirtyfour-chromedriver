@@ -60,10 +60,10 @@ pub fn get_file_names() -> (String, String) {
         chrome_exe = "C:/Program Files/Google/Chrome/Application/chrome.exe".to_string();
         chromedriver_exe = "chromedriver.exe".to_string();
     } else if cfg!(target_os = "macos") {
-        chrome_exe = "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome".to_string();
+        chrome_exe = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string();
         chromedriver_exe = "chromedriver".to_string();
     } else {
-        chrome_exe = "chrome".to_string();
+        chrome_exe = "google-chrome".to_string();
         chromedriver_exe = "chromedriver".to_string();
     }
 
@@ -127,7 +127,7 @@ pub async fn get_dw_link(chrome_version:String) -> String {
 
 pub async fn get_version_info() -> String {
     let version_info: String;
-    let (chrome_exe, chromedriver_exe) = get_file_names();
+    let chrome_exe = get_file_names().0;
     if cfg!(target_os = "windows") {
         let ps_command = format!(
             "(Get-Item '{}').VersionInfo.ProductVersion",
@@ -146,7 +146,11 @@ pub async fn get_version_info() -> String {
             .expect("Google Chrome not installed");
         version_info = String::from_utf8_lossy(&output.stdout).trim().to_string().split(" ").nth(2).unwrap().to_string();
     } else {
-        let output = Command::new("google-chrome --version").output().expect("Google chrome --version failed");
+        let terminal_command = "--version".to_string();
+        let output = Command::new("google-chrome")
+            .args(["-Command", &terminal_command])
+            .output()
+            .expect("google-chrome --version failed");
         version_info = String::from_utf8_lossy(&output.stdout).trim().to_string().split(" ").nth(2).unwrap().to_string();
     }
     let re = Regex::new(r"^([^.]+\.)+[^.]+$").unwrap();
@@ -182,11 +186,6 @@ pub fn dw_name() -> String {
     dw_name
 }
 pub async fn download_chromedriver(client: &reqwest::Client, dw_link: String) -> anyhow::Result<()> {
-
-    let version_info: String;
-    let (chrome_exe, chromedriver_exe) = get_file_names();
-    
-
     let driver_path = get_cache_dir().join(PathBuf::from(dw_name()).with_extension("zip"));
     let response = client.get(&dw_link).send().await?;
     let file = File::create(&driver_path)?;
@@ -199,12 +198,12 @@ pub async fn download_chromedriver(client: &reqwest::Client, dw_link: String) ->
         .await?;
 
     println!("Extracting Chromedriver...");
-    zip_extract(&driver_path, &get_cache_dir()).unwrap();
+    zip_extract(&driver_path, &get_cache_dir())?;
 
     println!("Completed Chromedriver Download ({})", &dw_link);
 
     // Delete zip file
-    fs::remove_file(&driver_path).unwrap();
+    fs::remove_file(&driver_path)?;
 
     Ok(())
 }
@@ -227,7 +226,7 @@ impl Handler {
         Self::default()
     }
     fn package_downloaded(&self) -> bool {
-        let (chrome_path, driver_path) = get_file_names();
+        let driver_path = get_file_names().1;
         let chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(driver_path);
         if Path::new(&chromedriver_exe).exists() {
             return true;
@@ -253,22 +252,19 @@ impl Handler {
             download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
         }
         match update_version_file().await {
-            Ok(result) =>
+            Ok(_result) =>
                 {
                     println!("Chromedriver Version matches!");
                 },
-            Err(e) =>{
+            Err(_e) =>{
                 println!("Chromedriver Version mismatching. Finding New one!");
                 let dw_links = get_dw_link(get_version_info().await).await;
                 download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
             },
         }
-        let (default_chrome_path, default_driver_path) = get_file_names();
-        chrome_exe = default_chrome_path.into();
+        chrome_exe = chrome_exe_name.into();
         chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(chromedriver_exe_name);
-        
-
-
+        capabilities.set_binary(chrome_exe.to_str().unwrap())?;
         let mut command = Command::new(chromedriver_exe);
         command
             .arg(format!("--port={}", port))
@@ -298,11 +294,9 @@ impl Handler {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::thread;
-    use std::time::Duration;
+    use std::{thread, time::Duration};
     use thirtyfour::prelude::*;
-    use crate::manager::{dw_name, get_cache_dir, get_file_names, Handler};
+    use crate::manager::Handler;
 
     #[tokio::test]
     async fn test_launch_chromedriver() -> anyhow::Result<()>{
