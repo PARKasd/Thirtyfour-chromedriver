@@ -63,7 +63,7 @@ pub fn get_file_names() -> (String, String) {
         chrome_exe = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string();
         chromedriver_exe = "chromedriver".to_string();
     } else {
-        chrome_exe = "google-chrome".to_string();
+        chrome_exe = "/usr/bin/google-chrome".to_string();
         chromedriver_exe = "chromedriver".to_string();
     }
 
