@@ -15,6 +15,7 @@ async fn update_version_file() -> std::io::Result<bool> {
     fs::create_dir_all(&cache_dir)?;
 
     let version_path = cache_dir.join("version.txt");
+    // get_version_info()가 Future를 반환하므로 .await를 사용하여 실제 값을 얻습니다
     let current_version = get_version_info().await;
 
     if !version_path.exists() {
@@ -23,7 +24,6 @@ async fn update_version_file() -> std::io::Result<bool> {
         return Ok(true);
     }
 
-    
     let mut existing_version = String::new();
     File::open(&version_path)?.read_to_string(&mut existing_version)?;
 
@@ -256,7 +256,7 @@ impl Handler {
             let dw_links = get_dw_link(get_version_info().await).await;
             download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
         }
-        if update_version_file() {
+        if update_version_file().await? {
             println!("Chromedriver Version matches!");
         } else {
                 println!("Chromedriver Version mismatching. Finding New one!");
