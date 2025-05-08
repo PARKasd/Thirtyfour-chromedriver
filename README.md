@@ -16,7 +16,7 @@ Add these to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-Thirtyfour-chromedriver = "0.1.4"
+Thirtyfour-chromedriver = "0.1.5"
 ```
 
 ## Code Example

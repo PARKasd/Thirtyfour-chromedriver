@@ -57,13 +57,18 @@ pub fn get_file_names() -> (String, String) {
     let chromedriver_exe: String;
 
     if cfg!(target_os = "windows") {
-        chrome_exe = "C:/Program Files/Google/Chrome/Application/chrome.exe".to_string();
+        if cfg!(target_pointer_width = "64") {
+            chrome_exe = "C:/Program Files/Google/Chrome/Application/chrome.exe".to_string();
+        } else {
+            chrome_exe = "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe".to_string();
+        }
+        
         chromedriver_exe = "chromedriver.exe".to_string();
     } else if cfg!(target_os = "macos") {
         chrome_exe = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string();
         chromedriver_exe = "chromedriver".to_string();
     } else {
-        chrome_exe = "google-chrome".to_string();
+        chrome_exe = "/usr/bin/google-chrome".to_string();
         chromedriver_exe = "chromedriver".to_string();
     }
 
@@ -251,17 +256,14 @@ impl Handler {
             let dw_links = get_dw_link(get_version_info().await).await;
             download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
         }
-        match update_version_file().await {
-            Ok(_result) =>
-                {
-                    println!("Chromedriver Version matches!");
-                },
-            Err(_e) =>{
+        if update_version_file() {
+            println!("Chromedriver Version matches!");
+        } else {
                 println!("Chromedriver Version mismatching. Finding New one!");
                 let dw_links = get_dw_link(get_version_info().await).await;
                 download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
-            },
-        }
+            }
+        
         chrome_exe = chrome_exe_name.into();
         chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(chromedriver_exe_name);
         capabilities.set_binary(chrome_exe.to_str().unwrap())?;
