@@ -2,7 +2,7 @@ use std::{fs, process};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use indicatif::{ProgressBar, ProgressStyle};
 use platform_dirs::AppDirs;
 use std::io::Read;
@@ -278,6 +278,7 @@ impl Handler {
         let mut child = command.spawn()?;
 
         let stdout = child.stdout.take().unwrap();
+        let mut urls = String::new();
 
         {
             let reader = BufReader::new(stdout);
@@ -292,11 +293,68 @@ impl Handler {
 
         Ok(child)
     }
+    
+    pub async fn launch_chromedriver_without_port(
+        &mut self,
+        capabilities: &mut ChromeCapabilities
+    ) -> Result<(process::Child, String), anyhow::Error> {
+        self.client = reqwest::Client::new();
+
+        let chrome_exe: PathBuf;
+        let chromedriver_exe: PathBuf;
+
+        let (chrome_exe_name, chromedriver_exe_name) = get_file_names();
+
+        if !self.package_downloaded() {
+            let dw_links = get_dw_link(get_version_info().await).await;
+            download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+        }
+        if update_version_file().await? {
+            println!("Chromedriver Version matches!");
+        } else {
+            println!("Chromedriver Version mismatching. Finding New one!");
+            let dw_links = get_dw_link(get_version_info().await).await;
+            download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+        }
+
+        chrome_exe = chrome_exe_name.into();
+        chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(chromedriver_exe_name);
+        capabilities.set_binary(chrome_exe.to_str().unwrap())?;
+        let mut command = Command::new(chromedriver_exe);
+        command
+
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+
+
+        let mut child = command.spawn()?;
+
+        let stdout = child.stdout.take().unwrap();
+        let mut urls = String::new();
+
+        {
+            let reader = BufReader::new(stdout);
+            for line_result in reader.lines() {
+                let line = line_result?;
+                if line.contains("successfully") {
+                    let port = &line.split(" ").nth(6).unwrap().replace(".", "").to_string();
+                    urls = format!("http://localhost:{}", port);
+                    println!("Chromedriver launched at port) {}",port);
+                    break;
+                }
+            }
+        }
+
+
+        Ok((child, urls))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{thread, time::Duration};
+    use std::thread::sleep;
     use thirtyfour::prelude::*;
     use crate::manager::Handler;
 
@@ -308,11 +366,31 @@ mod tests {
         caps.set_no_sandbox()?;
         caps.set_disable_gpu()?;
         let mut chromedriver = Handler::new()
-            .launch_chromedriver(&mut caps, "3000")
+            .launch_chromedriver_without_port(&mut caps)
             .await?;
         
         println!("Launched Chromedriver");
-        let driver = WebDriver::new("http://localhost:3000", caps).await?;
+        thread::sleep(tokio::time::Duration::from_secs(1));
+        let driver = WebDriver::new(chromedriver.1, caps).await?;
+        driver.goto("https://www.gimkit.com/join").await?;
+
+        thread::sleep(Duration::from_secs(10));
+
+        driver.quit().await?;
+        chromedriver.0.kill()?;
+
+        let mut caps = DesiredCapabilities::chrome();
+
+        caps.set_headless()?;
+        caps.set_no_sandbox()?;
+        caps.set_disable_gpu()?;
+        let mut chromedriver = Handler::new()
+            .launch_chromedriver(&mut caps, "9515")
+            .await?;
+
+        println!("Launched Chromedriver");
+        thread::sleep(tokio::time::Duration::from_secs(1));
+        let driver = WebDriver::new("http://localhost:9515", caps).await?;
         driver.goto("https://www.gimkit.com/join").await?;
 
         thread::sleep(Duration::from_secs(10));
