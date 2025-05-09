@@ -16,10 +16,10 @@ Add these to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-Thirtyfour-chromedriver = "0.1.5"
+Thirtyfour-chromedriver = "0.2.0"
 ```
 
-## Code Example
+## Code Example1
 
 ```rust
 use thirtyfour::prelude::*;
@@ -44,5 +44,26 @@ async fn main() -> anyhow::Result<()> {
     chromedriver.kill()?;
 
     Ok(())
+}
+```
+
+
+## Code Example2
+
+```rust
+use thirtyfour::prelude::*;
+
+// Require the Handler
+use thirtyfour_chromedriver::{manager::Handler};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Create Chrome capabilities
+    let mut caps = DesiredCapabilities::chrome();
+    let mut chromedriver = Handler::new()
+        .launch_chromedriver_without_port(&mut caps)
+        .await?;
+
+    chromedriver.0.kill()?;
 }
 ```
