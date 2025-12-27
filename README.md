@@ -67,3 +67,8 @@ async fn main() -> anyhow::Result<()> {
     chromedriver.0.kill()?;
 }
 ```
+
+
+
+### Thanks to...
+[Repo which I got the idea](https://github.com/AxLisin/ChromedriverManager)
