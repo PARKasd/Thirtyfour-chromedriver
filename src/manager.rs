@@ -7,7 +7,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use platform_dirs::AppDirs;
 use std::io::Read;
 use regex::Regex;
-use zip_extensions::zip_extract;
+use zip::ZipArchive;
 use thirtyfour::{ChromeCapabilities, ChromiumLikeCapabilities};
 
 async fn update_version_file() -> std::io::Result<bool> {
@@ -106,28 +106,51 @@ pub async fn write_file(
     Ok(())
 }
 
-pub async fn get_dw_link(chrome_version:String) -> String {
-    let dw_link: String;
-
-    if cfg!(target_os = "windows") {
-        if cfg!(target_pointer_width = "64") {
-            dw_link = format!("https://storage.googleapis.com/chrome-for-testing-public/{}{}", chrome_version, "/win64/chromedriver-win64.zip").to_string();
-        }
-        else{
-            dw_link = format!("https://storage.googleapis.com/chrome-for-testing-public/{}{}", chrome_version, "/win32/chromedriver-win32.zip").to_string();
-        }
-
+pub async fn get_dw_link(client: &reqwest::Client, chrome_version: String) -> anyhow::Result<String> {
+    let platform = if cfg!(target_os = "windows") {
+        if cfg!(target_pointer_width = "64") { "win64" } else { "win32" }
     } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "x86_64") {
-            dw_link = format!("https://storage.googleapis.com/chrome-for-testing-public/{}{}", chrome_version, "/mac-x64/chromedriver-mac-x64.zip").to_string();
-        }
-        else {
-            dw_link = format!("https://storage.googleapis.com/chrome-for-testing-public/{}{}", chrome_version, "/mac-arm64/chromedriver-mac-arm64.zip").to_string();
-        }
-    } else{
-        dw_link = format!("https://storage.googleapis.com/chrome-for-testing-public/{}{}", chrome_version, "/linux64/chromedriver-linux64.zip").to_string();
-    }
-    dw_link
+        if cfg!(target_arch = "x86_64") { "mac-x64" } else { "mac-arm64" }
+    } else {
+        "linux64"
+    };
+
+    let json_url = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json";
+    let response = client.get(json_url).send().await?;
+    let json: serde_json::Value = response.json().await?;
+
+    let versions = json["versions"].as_array()
+        .ok_or_else(|| anyhow::anyhow!("Invalid JSON structure: missing versions array"))?;
+
+    let major = chrome_version.split('.').next().unwrap_or("");
+
+    // 1. Exact match
+    // 2. Latest version with the same major that has chromedriver downloads
+    let version_entry = versions.iter()
+        .find(|v| v["version"].as_str() == Some(chrome_version.as_str()))
+        .or_else(|| {
+            versions.iter()
+                .filter(|v| {
+                    v["version"].as_str()
+                        .and_then(|s| s.split('.').next())
+                        .map(|m| m == major)
+                        .unwrap_or(false)
+                    && v["downloads"]["chromedriver"].as_array().is_some()
+                })
+                .last()
+        })
+        .ok_or_else(|| anyhow::anyhow!("No chromedriver found for Chrome major version {}", major))?;
+
+    let chromedriver_downloads = version_entry["downloads"]["chromedriver"].as_array()
+        .ok_or_else(|| anyhow::anyhow!("No chromedriver downloads for version {}", chrome_version))?;
+
+    let url = chromedriver_downloads.iter()
+        .find(|d| d["platform"].as_str() == Some(platform))
+        .and_then(|d| d["url"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("No chromedriver URL for platform {}", platform))?
+        .to_string();
+
+    Ok(url)
 }
 
 pub async fn get_version_info() -> String {
@@ -203,7 +226,8 @@ pub async fn download_chromedriver(client: &reqwest::Client, dw_link: String) ->
         .await?;
 
     println!("Extracting Chromedriver...");
-    zip_extract(&driver_path, &get_cache_dir())?;
+    let zip_file = File::open(&driver_path)?;
+    ZipArchive::new(zip_file)?.extract(&get_cache_dir())?;
 
     println!("Completed Chromedriver Download ({})", &dw_link);
 
@@ -253,17 +277,17 @@ impl Handler {
         let (chrome_exe_name, chromedriver_exe_name) = get_file_names();
 
         if !self.package_downloaded() {
-            let dw_links = get_dw_link(get_version_info().await).await;
-            download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+            let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+            download_chromedriver(&self.client, dw_links).await?;
         }
         if update_version_file().await? {
             println!("Chromedriver Version matches!");
         } else {
                 println!("Chromedriver Version mismatching. Finding New one!");
-                let dw_links = get_dw_link(get_version_info().await).await;
-                download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+                let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+                download_chromedriver(&self.client, dw_links).await?;
             }
-        
+
         chrome_exe = chrome_exe_name.into();
         chromedriver_exe = PathBuf::from(get_cache_dir()).join(dw_name()).join(chromedriver_exe_name);
         capabilities.set_binary(chrome_exe.to_str().unwrap())?;
@@ -306,15 +330,15 @@ impl Handler {
         let (chrome_exe_name, chromedriver_exe_name) = get_file_names();
 
         if !self.package_downloaded() {
-            let dw_links = get_dw_link(get_version_info().await).await;
-            download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+            let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+            download_chromedriver(&self.client, dw_links).await?;
         }
         if update_version_file().await? {
             println!("Chromedriver Version matches!");
         } else {
             println!("Chromedriver Version mismatching. Finding New one!");
-            let dw_links = get_dw_link(get_version_info().await).await;
-            download_chromedriver(&self.client, dw_links).await.expect("Failed to Download Chromedriver!");
+            let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+            download_chromedriver(&self.client, dw_links).await?;
         }
 
         chrome_exe = chrome_exe_name.into();
