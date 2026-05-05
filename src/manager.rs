@@ -2,7 +2,7 @@ use std::{fs, process};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use indicatif::{ProgressBar, ProgressStyle};
 use platform_dirs::AppDirs;
 use std::io::Read;
@@ -10,13 +10,12 @@ use regex::Regex;
 use zip::ZipArchive;
 use thirtyfour::{ChromeCapabilities, ChromiumLikeCapabilities};
 
-async fn update_version_file() -> std::io::Result<bool> {
+async fn update_version_file() -> anyhow::Result<bool> {
     let cache_dir = get_cache_dir();
     fs::create_dir_all(&cache_dir)?;
 
     let version_path = cache_dir.join("version.txt");
-    // get_version_info()가 Future를 반환하므로 .await를 사용하여 실제 값을 얻습니다
-    let current_version = get_version_info().await;
+    let current_version = get_version_info().await?;
 
     if !version_path.exists() {
         let mut file = File::create(&version_path)?;
@@ -153,42 +152,47 @@ pub async fn get_dw_link(client: &reqwest::Client, chrome_version: String) -> an
     Ok(url)
 }
 
-pub async fn get_version_info() -> String {
-    let version_info: String;
+pub async fn get_version_info() -> anyhow::Result<String> {
     let chrome_exe = get_file_names().0;
+    let version_info: String;
+
     if cfg!(target_os = "windows") {
-        let ps_command = format!(
-            "(Get-Item '{}').VersionInfo.ProductVersion",
-            chrome_exe
-        );
+        let ps_command = format!("(Get-Item '{}').VersionInfo.ProductVersion", chrome_exe);
         let output = Command::new("powershell")
             .args(["-Command", &ps_command])
             .output()
-            .expect("PowerShell execution failed");
+            .map_err(|e| anyhow::anyhow!("PowerShell execution failed: {}", e))?;
         version_info = String::from_utf8_lossy(&output.stdout).trim().to_string();
     } else if cfg!(target_os = "macos") {
-        let terminal_command = "--version".to_string();
         let output = Command::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-            .args(["-Command", &terminal_command])
+            .arg("--version")
             .output()
-            .expect("Google Chrome not installed");
-        version_info = String::from_utf8_lossy(&output.stdout).trim().to_string().split(" ").nth(2).unwrap().to_string();
+            .map_err(|e| anyhow::anyhow!("Google Chrome not found: {}", e))?;
+        version_info = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .split_whitespace()
+            .nth(2)
+            .ok_or_else(|| anyhow::anyhow!("Unexpected Chrome version output format"))?
+            .to_string();
     } else {
-        let terminal_command = "--version".to_string();
         let output = Command::new("google-chrome")
-            .args(["-Command", &terminal_command])
+            .arg("--version")
             .output()
-            .expect("google-chrome --version failed");
-        version_info = String::from_utf8_lossy(&output.stdout).trim().to_string().split(" ").nth(2).unwrap().to_string();
+            .map_err(|e| anyhow::anyhow!("google-chrome not found: {}", e))?;
+        version_info = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .split_whitespace()
+            .nth(2)
+            .ok_or_else(|| anyhow::anyhow!("Unexpected Chrome version output format"))?
+            .to_string();
     }
+
     let re = Regex::new(r"^([^.]+\.)+[^.]+$").unwrap();
-
     if re.is_match(&version_info) {
-        version_info
+        Ok(version_info)
     } else {
-        panic!("Google Chrome not installed or version format incorrect");
+        anyhow::bail!("Google Chrome not installed or version format is unrecognized: {:?}", version_info)
     }
-
 }
 pub fn dw_name() -> String {
     let dw_name : String;
@@ -277,14 +281,14 @@ impl Handler {
         let (chrome_exe_name, chromedriver_exe_name) = get_file_names();
 
         if !self.package_downloaded() {
-            let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+            let dw_links = get_dw_link(&self.client, get_version_info().await?).await?;
             download_chromedriver(&self.client, dw_links).await?;
         }
         if update_version_file().await? {
             println!("Chromedriver Version matches!");
         } else {
                 println!("Chromedriver Version mismatching. Finding New one!");
-                let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+                let dw_links = get_dw_link(&self.client, get_version_info().await?).await?;
                 download_chromedriver(&self.client, dw_links).await?;
             }
 
@@ -302,7 +306,6 @@ impl Handler {
         let mut child = command.spawn()?;
 
         let stdout = child.stdout.take().unwrap();
-        let mut urls = String::new();
 
         {
             let reader = BufReader::new(stdout);
@@ -313,7 +316,6 @@ impl Handler {
                 }
             }
         }
-
 
         Ok(child)
     }
@@ -330,14 +332,14 @@ impl Handler {
         let (chrome_exe_name, chromedriver_exe_name) = get_file_names();
 
         if !self.package_downloaded() {
-            let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+            let dw_links = get_dw_link(&self.client, get_version_info().await?).await?;
             download_chromedriver(&self.client, dw_links).await?;
         }
         if update_version_file().await? {
             println!("Chromedriver Version matches!");
         } else {
             println!("Chromedriver Version mismatching. Finding New one!");
-            let dw_links = get_dw_link(&self.client, get_version_info().await).await?;
+            let dw_links = get_dw_link(&self.client, get_version_info().await?).await?;
             download_chromedriver(&self.client, dw_links).await?;
         }
 
@@ -355,23 +357,29 @@ impl Handler {
         let mut child = command.spawn()?;
 
         let stdout = child.stdout.take().unwrap();
-        let mut urls = String::new();
+        let mut url = String::new();
 
         {
             let reader = BufReader::new(stdout);
             for line_result in reader.lines() {
                 let line = line_result?;
                 if line.contains("successfully") {
-                    let port = &line.split(" ").nth(6).unwrap().replace(".", "").to_string();
-                    urls = format!("http://localhost:{}", port);
-                    println!("Chromedriver launched at port) {}",port);
+                    let port = line.split_whitespace().last()
+                        .ok_or_else(|| anyhow::anyhow!("Could not parse port from chromedriver output: {}", line))?
+                        .trim_end_matches('.');
+                    url = format!("http://localhost:{}", port);
+                    println!("Chromedriver launched at port {}", port);
                     break;
                 }
             }
         }
 
+        if url.is_empty() {
+            let _ = child.kill();
+            return Err(anyhow::anyhow!("Chromedriver failed to start (no successful startup message received)"));
+        }
 
-        Ok((child, urls))
+        Ok((child, url))
     }
 }
 
